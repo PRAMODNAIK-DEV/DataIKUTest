@@ -20,7 +20,7 @@ import ToastMessage, { TOAST_TYPE } from "../common/ToastMessage/ToastMessage";
 import "./AgentFormInputModal.scss";
 import Loader from "../common/Loader/Loader";
 
-function usePrevious(value: any) {
+function usePrevious(value) {
     const ref = useRef();
     useEffect(() => {
         ref.current = value;
@@ -42,40 +42,41 @@ const AgentFormInputModal = ({
     failedCondition = "Agent does not have any configuration.",
     defaultSelectedParameters = {},
 }: agentFormInputModalProps) => {
+    // START: HOOKS AND STATE DECLARATIONS
     const [isLoading, setLoading] = useState(false);
-    const [openToast, setOpenToast] = useState<boolean>(false);
+    const [openToast, setOpenToast] = useState(false);
     const [childProperties, setChildProperties] = useState({});
     const [toastInfo, setToastInfo] = useState({
         message: "",
         severity: TOAST_TYPE.SUCCESS,
     });
     const [localAgentDetail, setLocalAgentDetail] = useState(agentDetail);
-    const [browserFields, setBrowserFields] = useState<string[]>(ignoreFields);
-    const [formData2, setFormData2] = useState<any>({});
-    const [keyName, setKeyName] = useState<string>("");
+    const [browserFields, setBrowserFields] = useState(ignoreFields);
+    const [formData2, setFormData2] = useState({});
+    const [keyName, setKeyName] = useState("");
 
-    const [formData, setFormData] = useState<any>(() => {
+    const [formData, setFormData] = useState(() => {
         if (Object.keys(defaultSelectedParameters).length > 0) {
             return defaultSelectedParameters;
         }
 
-        const initialState: any = {};
+        const initialState = {};
         const allFields = (localAgentDetail?.skills_config || []).flatMap(
-            (skill: any) => Object.entries(skill.input_schema?.properties || {})
+            (skill) => Object.entries(skill.input_schema?.properties || {})
         );
 
-        allFields.forEach(([key, value]: any) => {
+        allFields.forEach(([key, value]) => {
             if (!browserFields.includes(key)) {
                 initialState[key] = value.default === "None" ? "" : value.default || "";
             }
         });
 
-        // Always include model and system_prompt from agentDetail initially
         initialState.model = localAgentDetail?.model || "";
         initialState.agent_system_prompt = localAgentDetail?.system_prompt || "";
 
         return initialState;
     });
+    // END: HOOKS AND STATE DECLARATIONS
 
     const combinedProperties = useMemo(() => {
         return (localAgentDetail?.skills_config || []).reduce(
@@ -87,35 +88,32 @@ const AgentFormInputModal = ({
         );
     }, [localAgentDetail]);
 
-    // This is the new, combined memoized function that determines if the button should be disabled.
+    // START: CORRECTED isSubmitDisabled LOGIC
     const isSubmitDisabled = useMemo(() => {
-        const requiredFields = new Set<string>();
+        const requiredFields = new Set();
 
-        // Add static required fields
         (localAgentDetail?.skills_config || []).forEach(skill => {
-            (skill.input_schema?.required || []).forEach((key: string) => {
+            (skill.input_schema?.required || []).forEach(key => {
                 if (!browserFields.includes(key)) {
                     requiredFields.add(key);
                 }
             });
         });
 
-        // Add dynamic required fields
-        Object.entries(combinedProperties).forEach(([key, data]: any) => {
+        Object.entries(combinedProperties).forEach(([key, data]) => {
             if (data?.$ref || data?.anyOf?.[0]?.$ref) {
                 const reference = data?.$ref || data?.anyOf?.[0]?.$ref;
                 const referenceKeys = reference.replace("#/", "").split("/");
-
-                localAgentDetail.skills_config?.forEach((loop: any) => {
-                    const def = loop.input_schema?.$defs?.[referenceKeys[1]];
-                    if (def) {
-                        (def.required || []).forEach((dynamicKey: string) => {
-                            if (!browserFields.includes(dynamicKey)) {
-                                requiredFields.add(dynamicKey);
-                            }
-                        });
-                    }
-                });
+                const defs = localAgentDetail?.skills_config?.reduce((acc, skill) => ({...acc, ...(skill.input_schema?.$defs || {})}), {});
+                const def = defs?.[referenceKeys[1]];
+                
+                if (def) {
+                    (def.required || []).forEach(dynamicKey => {
+                        if (!browserFields.includes(dynamicKey)) {
+                            requiredFields.add(dynamicKey);
+                        }
+                    });
+                }
             }
         });
 
@@ -124,36 +122,22 @@ const AgentFormInputModal = ({
             requiredFields.add('model');
         }
 
-        // Check if any required field is empty
-        return [...requiredFields].some((fieldKey) => {
-            // Check the main formData object
-            const value = formData?.[fieldKey];
+        return [...requiredFields].some(fieldKey => {
+            const value = formData?.[fieldKey] ?? formData?.query_params?.[fieldKey];
             
-            // Check nested query_params if needed
-            const nestedValue = formData?.query_params?.[fieldKey];
-
-            // A field is considered empty if its value is null, undefined, empty string, or an empty array/object
-            const isEmpty = (val: any) => {
+            const isEmpty = (val) => {
                 if (val === undefined || val === null || val === "") return true;
                 if (Array.isArray(val) && val.length === 0) return true;
                 if (typeof val === "object" && Object.keys(val).length === 0) return true;
                 return false;
             };
 
-            // If it's a dynamic field, check if its parent container is filled. This can be complex.
-            // A simpler, more robust check is just to look for its value at the top level,
-            // or inside `query_params`, which `updateDefaultsInSkillsConfig` handles.
-            if (isEmpty(value) && isEmpty(nestedValue)) {
-                 return true;
-            }
-
-            return false;
+            return isEmpty(value);
         });
-    }, [formData, localAgentDetail, browserFields]);
+    }, [formData, localAgentDetail, browserFields, combinedProperties]);
+    // END: CORRECTED isSubmitDisabled LOGIC
     
-    // ... all other useEffects and handlers remain the same ...
-    
-    // useEffects for initialization and reset
+    // START: EFFECT HOOKS
     useEffect(() => {
         setLoading(!localAgentDetail?.agent_id && openAgent);
     }, [localAgentDetail, openAgent]);
@@ -175,12 +159,12 @@ const AgentFormInputModal = ({
 
     useEffect(() => {
         if (resetFormTrigger !== undefined) {
-            const initialState: any = {};
+            const initialState = {};
             const allFields = (localAgentDetail?.skills_config || []).flatMap(
-                (skill: any) => Object.entries(skill.input_schema?.properties || {})
+                (skill) => Object.entries(skill.input_schema?.properties || {})
             );
 
-            allFields.forEach(([key, value]: any) => {
+            allFields.forEach(([key, value]) => {
                 if (!browserFields.includes(key)) {
                     initialState[key] =
                         value.default === "None" ? "" : value.default || "";
@@ -192,74 +176,23 @@ const AgentFormInputModal = ({
 
             setFormData(initialState);
             setFormData2({});
-            setDynamicFieldsData({});
-            // No need to call handleAdditionalFieldsRef() here anymore
         }
     }, [resetFormTrigger, localAgentDetail?.agent_id]);
+    // END: EFFECT HOOKS
 
-    useEffect(() => {
-        // No need to call handleAdditionalFieldsRef() here anymore as it's
-        // now part of the memoized function.
-    }, [openAgent]);
-
-    const updateDefaultsInSkillsConfig = (
-        agentDetailtemp: any,
-        defaultParams: any
-    ) => {
-        const skills = agentDetailtemp.skills_config;
-        if (!skills || !Array.isArray(skills)) return agentDetailtemp;
-
-        for (const skill of skills) {
-            const inputSchema = skill.input_schema;
-            const queryParams = defaultParams.query_params;
-
-            if (!inputSchema?.$defs || !queryParams) continue;
-
-            const queryParamKeys = Object.keys(queryParams);
-            let bestMatchKey = "";
-            let maxMatches = 0;
-
-            for (const [key, schema] of Object.entries<any>(inputSchema.$defs)) {
-                const schemaKeys = Object.keys(schema.properties || {});
-                const matches = schemaKeys.filter((k) =>
-                    queryParamKeys.includes(k)
-                ).length;
-
-                if (matches > maxMatches) {
-                    bestMatchKey = key;
-                    maxMatches = matches;
-                }
-            }
-
-            if (!bestMatchKey) continue;
-
-            const matchedSchema = inputSchema.$defs[bestMatchKey];
-            for (const [key, value] of Object.entries(queryParams)) {
-                if (matchedSchema.properties?.[key]) {
-                    matchedSchema.properties[key].default = value;
-                }
-            }
-            inputSchema.$defs[bestMatchKey] = matchedSchema;
-            skill.input_schema = inputSchema;
-        }
-        return agentDetailtemp;
-    };
-
-    const handleAdditionalFieldsRef = () => {
-        // This function is no longer needed in its current form
-    };
+    // ... (rest of your component code, including handlers and JSX)
 
     const handleDynamicFieldChange = (
-        fieldKey: string,
-        value: any,
-        key: string
+        fieldKey,
+        value,
+        key
     ) => {
-        setFormData2((prevState: any) => {
+        setFormData2((prevState) => {
             const updatedFormData = {
                 ...prevState,
                 [fieldKey]: value,
             };
-            setFormData((oldState: any) => ({
+            setFormData((oldState) => ({
                 ...oldState,
                 [key]: updatedFormData,
             }));
@@ -271,7 +204,7 @@ const AgentFormInputModal = ({
         handleCloseAgent();
     };
 
-    const mockupUpdate = (query: string) => {
+    const mockupUpdate = (query) => {
         if (combinedProperties.query) {
             formData["query"] = query;
         } else if (combinedProperties.user_query) {
@@ -294,17 +227,86 @@ const AgentFormInputModal = ({
         onSubmitCallBack(finalFormData, mockupUpdate);
     };
 
-    const handleInputChange = useCallback((key: string, value: any) => {
-        setFormData((prevState: any) => {
-            const updatedFormData = { ...prevState, [key]: value };
-            return updatedFormData;
-        });
+    const handleInputChange = useCallback((key, value) => {
+        setFormData((prevState) => ({ ...prevState, [key]: value }));
     }, []);
-    
-    // The renderSkillSections function remains unchanged from your previous version,
-    // as it correctly renders the fields based on agentDetail.
+
     const renderSkillSections = () => {
-      // ... your existing renderSkillSections code ...
+        if (!localAgentDetail?.skills_config?.length) {
+            return (
+                <h5 className="error-message-container">{failedCondition}</h5>
+            );
+        }
+
+        return localAgentDetail.skills_config && localAgentDetail.skills_config.map((skill, skillIndex) => {
+            const skillName = skill.name || `Skill ${skillIndex + 1}`;
+            const skillProperties = Object.entries(skill.input_schema?.properties || {});
+            const skillRequired = skill.input_schema?.required || [];
+            const filteredProperties = skillProperties.filter(([key]) => {
+                return !browserFields.includes(key) && key !== "query_params";
+            });
+            const dynamicRefs = skillProperties.filter(([, value]) => value?.$ref || value?.anyOf?.[0]?.$ref);
+            const skillDynamicFields = {};
+
+            dynamicRefs.forEach(([fieldKey, value]) => {
+                const reference = value?.$ref || value?.anyOf?.[0]?.$ref;
+                const referenceKeys = reference.replace("#/", "").split("/");
+                const def = skill.input_schema?.$defs?.[referenceKeys[1]];
+                if (def) {
+                    Object.entries(def.properties || {}).forEach(([dynamicKey, dynamicValue]) => {
+                        if (!browserFields.includes(dynamicKey)) {
+                            skillDynamicFields[dynamicKey] = {
+                                ...dynamicValue,
+                                required: (def.required || []).includes(dynamicKey)
+                            };
+                        }
+                    });
+                }
+            });
+            const allSkillFields = [
+                ...filteredProperties,
+                ...Object.entries(skillDynamicFields)
+            ];
+            allSkillFields.sort(([keyA, fieldA], [keyB, fieldB]) => {
+                const isRequiredA = skillRequired.includes(keyA) || fieldA.required;
+                const isRequiredB = skillRequired.includes(keyB) || fieldB.required;
+
+                if (isRequiredA && !isRequiredB) {
+                    return -1;
+                }
+                if (!isRequiredA && isRequiredB) {
+                    return 1;
+                }
+                return 0;
+            });
+            return (
+                <div key={skillName} style={{ marginBottom: '20px' }}>
+                    <Typography variant="h6" className="skill-section-title">
+                        {skillName}
+                    </Typography>
+                    <Grid container spacing={2} className="skill-form-grid">
+                        {allSkillFields.map(([fieldKey, widget]) => (
+                            <Grid
+                                item xs={12} md={6} sm={12} lg={6} xl={4}
+                                className="grid-padding"
+                                key={`${skillName}-${fieldKey}`}
+                            >
+                                <CommonComponents
+                                    fieldKey={fieldKey}
+                                    datavlaue={widget}
+                                    handleInputChange={handleInputChange}
+                                    formData={formData}
+                                    agentDetail={localAgentDetail}
+                                    browserFields={browserFields}
+                                    isRequiredField={skillRequired.includes(fieldKey) || widget.required}
+                                    chipData={chipData}
+                                />
+                            </Grid>
+                        ))}
+                    </Grid>
+                </div>
+            );
+        });
     };
 
     return (
