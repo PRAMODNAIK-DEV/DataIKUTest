@@ -89,50 +89,56 @@ const AgentFormInputModal = ({
         );
     }, [localAgentDetail]);
     
-    // START OF FIX: This is the new, consolidated logic for isSubmitDisabled.
     const isSubmitDisabled = useMemo(() => {
-        const requiredFields = new Set<string>();
+        const requiredFields = new Set();
+        const allSchemas = localAgentDetail?.skills_config?.reduce((acc, skill) => ({
+            ...acc,
+            ...(skill.input_schema?.properties || {}),
+            ...Object.entries(skill.input_schema?.$defs || {}).reduce((defsAcc, [key, def]) => ({ ...defsAcc, [key]: def }), {})
+        }), {});
 
-        // 1. Collect all static required fields from all skills
+        // Collect all required fields from each skill's main schema
         (localAgentDetail?.skills_config || []).forEach(skill => {
-            (skill.input_schema?.required || []).forEach((key: string) => {
+            (skill.input_schema?.required || []).forEach(key => {
                 if (!browserFields.includes(key)) {
-                    requiredFields.add(key);
+                    const schema = allSchemas?.[key] || skill.input_schema.properties[key];
+                    if (schema && schema?.type !== "null" && !schema?.anyOf?.some(item => item?.type === "null")) {
+                        requiredFields.add(key);
+                    }
+                }
+            });
+
+            // Collect required fields from dynamic schemas using $ref
+            Object.entries(skill.input_schema?.properties || {}).forEach(([, data]) => {
+                if (data?.$ref || data?.anyOf?.some(item => item?.$ref)) {
+                    const reference = data?.$ref || data?.anyOf?.find(item => item?.$ref)?.$ref;
+                    if (reference) {
+                        const referenceKeys = reference.replace("#/$defs/", "");
+                        const def = skill.input_schema?.$defs?.[referenceKeys];
+                        if (def) {
+                            (def.required || []).forEach(dynamicKey => {
+                                if (!browserFields.includes(dynamicKey)) {
+                                    requiredFields.add(dynamicKey);
+                                }
+                            });
+                        }
+                    }
                 }
             });
         });
 
-        // 2. Collect all dynamic required fields by finding them via `$ref`
-        Object.entries(combinedProperties).forEach(([, data]: any) => {
-            if (data?.$ref || data?.anyOf?.[0]?.$ref) {
-                const reference = data?.$ref || data?.anyOf?.[0]?.$ref;
-                const referenceKeys = reference.replace("#/", "").split("/");
-                
-                // Consolidate all $defs from all skills into a single object for easier lookup
-                const allDefs = localAgentDetail.skills_config?.reduce((acc: any, skill: any) => ({
-                    ...acc,
-                    ...(skill.input_schema?.$defs || {})
-                }), {});
-                
-                const def = allDefs?.[referenceKeys[1]];
-                
-                if (def) {
-                    (def.required || []).forEach((dynamicKey: string) => {
-                        if (!browserFields.includes(dynamicKey)) {
-                            requiredFields.add(dynamicKey);
-                        }
-                    });
-                }
-            }
-        });
+        // Special case: `model` is always required
+        if (localAgentDetail?.model) {
+            requiredFields.add('model');
+        }
 
-        // 3. Check if any of the collected required fields are empty in the form data
-        return [...requiredFields].some((fieldKey) => {
-            const value = formData?.[fieldKey] ?? formData?.query_params?.[fieldKey];
-            const fieldSchema = combinedProperties?.[fieldKey];
-
+        // Check if any of the collected required fields are empty
+        return [...requiredFields].some(fieldKey => {
+            const value = formData[fieldKey];
+            const fieldSchema = allSchemas?.[fieldKey];
+            
             // If the field has a default of null or its type is null, it's not truly required.
-            if (fieldSchema?.default === null || fieldSchema?.anyOf?.[0]?.type === 'null') {
+            if (fieldSchema?.default === null || fieldSchema?.anyOf?.some(item => item?.type === "null")) {
                 return false;
             }
 
@@ -147,7 +153,23 @@ const AgentFormInputModal = ({
             return isEmpty(value);
         });
     }, [formData, localAgentDetail, browserFields, combinedProperties]);
-    // END OF FIX
+    
+
+    // useEffect for suppressing the error display
+    useEffect(() => {
+        const errorHandler = (e: ErrorEvent) => {
+            if (e.message.includes('ResizeObserver loop completed with undelivered notifications')) {
+                e.stopImmediatePropagation();
+                e.stopPropagation();
+            }
+        };
+
+        window.addEventListener('error', errorHandler, true);
+        
+        return () => {
+            window.removeEventListener('error', errorHandler, true);
+        };
+    }, []);
 
     // useEffects for initialization and reset
     useEffect(() => {
@@ -349,6 +371,12 @@ const AgentFormInputModal = ({
                                 item xs={12} md={6} sm={12} lg={6} xl={4}
                                 className="grid-padding"
                                 key={`${skillName}-${fieldKey}`}
+                                style={{
+                                    // ADDED: This style helps prevent the resize loop.
+                                    // It ensures a maximum height for the grid item.
+                                    maxHeight: "400px", 
+                                    overflow: "auto" 
+                                }}
                             >
                                 <CommonComponents
                                     fieldKey={fieldKey}
