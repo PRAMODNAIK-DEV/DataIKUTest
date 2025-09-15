@@ -51,7 +51,7 @@ const AgentFormInputModal = ({
         severity: TOAST_TYPE.SUCCESS,
     });
     const [localAgentDetail, setLocalAgentDetail] = useState(agentDetail);
-    const [browserFields, setBrowserFields] = useState(ignoreFields);
+    const [browserFields] = useState(ignoreFields); // Removed 'setBrowserFields'
     const [formData2, setFormData2] = useState({});
     const [keyName, setKeyName] = useState("");
 
@@ -88,10 +88,11 @@ const AgentFormInputModal = ({
         );
     }, [localAgentDetail]);
 
-    // START: CORRECTED isSubmitDisabled LOGIC
+    // This is the correct, combined logic for isSubmitDisabled.
     const isSubmitDisabled = useMemo(() => {
         const requiredFields = new Set();
 
+        // 1. Add static required fields
         (localAgentDetail?.skills_config || []).forEach(skill => {
             (skill.input_schema?.required || []).forEach(key => {
                 if (!browserFields.includes(key)) {
@@ -100,7 +101,8 @@ const AgentFormInputModal = ({
             });
         });
 
-        Object.entries(combinedProperties).forEach(([key, data]) => {
+        // 2. Add dynamic required fields by finding them via `$ref`
+        Object.entries(combinedProperties).forEach(([, data]) => {
             if (data?.$ref || data?.anyOf?.[0]?.$ref) {
                 const reference = data?.$ref || data?.anyOf?.[0]?.$ref;
                 const referenceKeys = reference.replace("#/", "").split("/");
@@ -117,11 +119,12 @@ const AgentFormInputModal = ({
             }
         });
 
-        // Special case: `model` is always required
+        // 3. Special case: `model` is always required
         if (localAgentDetail?.model) {
             requiredFields.add('model');
         }
 
+        // 4. Check if any of the collected required fields are empty in the form data
         return [...requiredFields].some(fieldKey => {
             const value = formData?.[fieldKey] ?? formData?.query_params?.[fieldKey];
             
@@ -135,7 +138,6 @@ const AgentFormInputModal = ({
             return isEmpty(value);
         });
     }, [formData, localAgentDetail, browserFields, combinedProperties]);
-    // END: CORRECTED isSubmitDisabled LOGIC
     
     // START: EFFECT HOOKS
     useEffect(() => {
@@ -177,11 +179,54 @@ const AgentFormInputModal = ({
             setFormData(initialState);
             setFormData2({});
         }
-    }, [resetFormTrigger, localAgentDetail?.agent_id]);
+    }, [resetFormTrigger, localAgentDetail?.agent_id, browserFields]);
     // END: EFFECT HOOKS
-
-    // ... (rest of your component code, including handlers and JSX)
-
+    
+    // ... all other functions and the return statement remain the same as the user's original code ...
+    
+    const updateDefaultsInSkillsConfig = (
+        agentDetailtemp,
+        defaultParams
+    ) => {
+        const skills = agentDetailtemp.skills_config;
+        if (!skills || !Array.isArray(skills)) return agentDetailtemp;
+    
+        for (const skill of skills) {
+            const inputSchema = skill.input_schema;
+            const queryParams = defaultParams.query_params;
+    
+            if (!inputSchema?.$defs || !queryParams) continue;
+    
+            const queryParamKeys = Object.keys(queryParams);
+            let bestMatchKey = "";
+            let maxMatches = 0;
+    
+            for (const [key, schema] of Object.entries(inputSchema.$defs)) {
+                const schemaKeys = Object.keys(schema.properties || {});
+                const matches = schemaKeys.filter((k) =>
+                    queryParamKeys.includes(k)
+                ).length;
+    
+                if (matches > maxMatches) {
+                    bestMatchKey = key;
+                    maxMatches = matches;
+                }
+            }
+    
+            if (!bestMatchKey) continue;
+    
+            const matchedSchema = inputSchema.$defs[bestMatchKey];
+            for (const [key, value] of Object.entries(queryParams)) {
+                if (matchedSchema.properties?.[key]) {
+                    matchedSchema.properties[key].default = value;
+                }
+            }
+            inputSchema.$defs[bestMatchKey] = matchedSchema;
+            skill.input_schema = inputSchema;
+        }
+        return agentDetailtemp;
+    };
+    
     const handleDynamicFieldChange = (
         fieldKey,
         value,
@@ -199,11 +244,11 @@ const AgentFormInputModal = ({
             return updatedFormData;
         });
     };
-
+    
     const closePrompt = () => {
         handleCloseAgent();
     };
-
+    
     const mockupUpdate = (query) => {
         if (combinedProperties.query) {
             formData["query"] = query;
@@ -221,23 +266,23 @@ const AgentFormInputModal = ({
         }
         return formData;
     };
-
+    
     const chooseHandle = () => {
         let finalFormData = { ...formData };
         onSubmitCallBack(finalFormData, mockupUpdate);
     };
-
+    
     const handleInputChange = useCallback((key, value) => {
         setFormData((prevState) => ({ ...prevState, [key]: value }));
     }, []);
-
+    
     const renderSkillSections = () => {
         if (!localAgentDetail?.skills_config?.length) {
             return (
                 <h5 className="error-message-container">{failedCondition}</h5>
             );
         }
-
+    
         return localAgentDetail.skills_config && localAgentDetail.skills_config.map((skill, skillIndex) => {
             const skillName = skill.name || `Skill ${skillIndex + 1}`;
             const skillProperties = Object.entries(skill.input_schema?.properties || {});
@@ -247,8 +292,8 @@ const AgentFormInputModal = ({
             });
             const dynamicRefs = skillProperties.filter(([, value]) => value?.$ref || value?.anyOf?.[0]?.$ref);
             const skillDynamicFields = {};
-
-            dynamicRefs.forEach(([fieldKey, value]) => {
+    
+            dynamicRefs.forEach(([, value]) => {
                 const reference = value?.$ref || value?.anyOf?.[0]?.$ref;
                 const referenceKeys = reference.replace("#/", "").split("/");
                 const def = skill.input_schema?.$defs?.[referenceKeys[1]];
@@ -270,7 +315,7 @@ const AgentFormInputModal = ({
             allSkillFields.sort(([keyA, fieldA], [keyB, fieldB]) => {
                 const isRequiredA = skillRequired.includes(keyA) || fieldA.required;
                 const isRequiredB = skillRequired.includes(keyB) || fieldB.required;
-
+    
                 if (isRequiredA && !isRequiredB) {
                     return -1;
                 }
@@ -308,7 +353,7 @@ const AgentFormInputModal = ({
             );
         });
     };
-
+    
     return (
         <ThemeProvider theme={Theme}>
             <GlobalLoader open={isLoading} />
